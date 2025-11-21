@@ -28,6 +28,11 @@ export default function Home() {
   const [isMinting, setIsMinting] = useState(false)
   const [balance, setBalance] = useState<bigint>(BigInt(0))
 
+  // NFT 카드 삭제(리스트에서 제거)
+  const handleRemoveNFT = (tokenId: string) => {
+    setMyNFTs((prev) => prev.filter((nft) => nft.tokenId !== tokenId))
+  }
+
   // 이미지 업로드 관련 상태
   const [imageHash, setImageHash] = useState<string | null>(null)
   const [imageUrl, setImageUrl] = useState<string | null>(null)
@@ -317,6 +322,7 @@ export default function Home() {
           <h1 className="text-4xl font-bold text-zinc-900 dark:text-zinc-50 mb-2">
             ERC-721 NFT 테스트 앱
           </h1>
+          <h2 className="text-l font-semibold">정보보호학과 92313398 서지영</h2>
           <p className="text-zinc-600 dark:text-zinc-400 mb-4">
             Sepolia 테스트넷에서 NFT를 민팅하고 관리하세요
           </p>
@@ -561,6 +567,7 @@ export default function Home() {
                     currentAddress={address}
                     onTransfer={handleRefresh}
                     onRefresh={handleRefresh}
+                    onRemove={handleRemoveNFT}
                   />
                 ))}
               </div>

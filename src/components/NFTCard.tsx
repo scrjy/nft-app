@@ -2,9 +2,26 @@
 
 import { useState, useEffect } from 'react'
 import { ethers } from 'ethers'
-import { getContractWithSigner, getContract } from '@/lib/contract'
+import { getContractWithSigner } from '@/lib/contract'
 import { formatAddress } from '@/lib/web3'
-import { getIPFSGatewayUrl } from '@/lib/ipfs'
+import { Trash2 } from 'lucide-react' // ← 휴지통 아이콘 추가
+
+// ⭐ IPFS URL 변환 함수
+const convertIPFSUrl = (url: string): string => {
+  if (!url) return url
+  if (url.startsWith('ipfs://')) {
+    const hash = url.replace('ipfs://', '')
+    return `https://gateway.pinata.cloud/ipfs/${hash}`
+  }
+  return url
+}
+
+interface NFTMetadata {
+  name?: string
+  description?: string
+  image?: string
+  attributes?: any[]
+}
 
 interface NFTCardProps {
   tokenId: string
@@ -13,16 +30,7 @@ interface NFTCardProps {
   currentAddress: string
   onTransfer: () => void
   onRefresh: () => void
-}
-
-interface NFTMetadata {
-  name?: string
-  description?: string
-  image?: string
-  attributes?: Array<{
-    trait_type: string
-    value: string | number
-  }>
+  onRemove: (tokenId: string) => void
 }
 
 export default function NFTCard({
@@ -32,64 +40,56 @@ export default function NFTCard({
   currentAddress,
   onTransfer,
   onRefresh,
+  onRemove,
 }: NFTCardProps) {
-  const [isApproving, setIsApproving] = useState(false)
-  const [isTransferring, setIsTransferring] = useState(false)
-  const [transferTo, setTransferTo] = useState('')
-  const [approveTo, setApproveTo] = useState('')
-  const [showTransfer, setShowTransfer] = useState(false)
-  const [showApprove, setShowApprove] = useState(false)
-  const [imageUrl, setImageUrl] = useState<string | null>(null)
   const [metadata, setMetadata] = useState<NFTMetadata | null>(null)
+  const [imageUrl, setImageUrl] = useState<string | null>(null)
   const [isLoadingMetadata, setIsLoadingMetadata] = useState(false)
 
-  const isOwner = owner.toLowerCase() === currentAddress.toLowerCase()
+  const [isApproving, setIsApproving] = useState(false)
+  const [isTransferring, setIsTransferring] = useState(false)
+  const [isBurning, setIsBurning] = useState(false)
 
-  // IPFS URL을 HTTP 게이트웨이 URL로 변환
-  const convertIPFSUrl = (url: string): string => {
-    if (url.startsWith('ipfs://')) {
-      const hash = url.replace('ipfs://', '')
-      return getIPFSGatewayUrl(hash)
-    }
-    if (url.startsWith('https://ipfs.io/ipfs/')) {
-      const hash = url.replace('https://ipfs.io/ipfs/', '')
-      return getIPFSGatewayUrl(hash)
-    }
-    return url
-  }
+  const [showTransfer, setShowTransfer] = useState(false)
+  const [showApprove, setShowApprove] = useState(false)
+  const [transferTo, setTransferTo] = useState('')
+  const [approveTo, setApproveTo] = useState('')
 
-  // 메타데이터 로드
+  const isOwner =
+    currentAddress &&
+    owner &&
+    owner.toLowerCase() === currentAddress.toLowerCase()
+
+  /* ------------------------------------------------------------------
+     ⭐ 메타데이터 로딩
+  ------------------------------------------------------------------ */
   useEffect(() => {
     const loadMetadata = async () => {
       if (!tokenURI) return
 
       try {
         setIsLoadingMetadata(true)
+
         let metadataUrl = tokenURI
-
-        // IPFS URL인 경우 게이트웨이 URL로 변환
-        if (tokenURI.startsWith('ipfs://')) {
-          const hash = tokenURI.replace('ipfs://', '')
-          metadataUrl = getIPFSGatewayUrl(hash)
+        if (metadataUrl.startsWith('ipfs://')) {
+          metadataUrl = convertIPFSUrl(metadataUrl)
         }
 
-        const response = await fetch(metadataUrl)
-        if (!response.ok) {
-          throw new Error('메타데이터를 가져올 수 없습니다.')
-        }
+        const res = await fetch(metadataUrl)
+        if (!res.ok) throw new Error('메타데이터 로드 실패')
 
-        const data: NFTMetadata = await response.json()
+        const data = await res.json()
         setMetadata(data)
 
-        // 이미지 URL 처리
         if (data.image) {
-          const imageUrl = convertIPFSUrl(data.image)
-          setImageUrl(imageUrl)
+          setImageUrl(convertIPFSUrl(data.image))
+        } else {
+          setImageUrl(null)
         }
-      } catch (error) {
-        console.error('메타데이터 로드 오류:', error)
-        setImageUrl(null)
+      } catch (err) {
+        console.error('메타데이터 로드 오류:', err)
         setMetadata(null)
+        setImageUrl(null)
       } finally {
         setIsLoadingMetadata(false)
       }
@@ -98,6 +98,9 @@ export default function NFTCard({
     loadMetadata()
   }, [tokenURI])
 
+  /* ------------------------------------------------------------------
+     승인 기능
+  ------------------------------------------------------------------ */
   const handleApprove = async () => {
     if (!approveTo || !ethers.isAddress(approveTo)) {
       alert('유효한 주소를 입력해주세요.')
@@ -112,18 +115,20 @@ export default function NFTCard({
 
       const tx = await contract.approve(approveTo, tokenId)
       await tx.wait()
-      alert('승인이 완료되었습니다!')
-      setApproveTo('')
+
+      alert('승인 완료!')
       setShowApprove(false)
       onRefresh()
-    } catch (error: any) {
-      console.error('Approve error:', error)
-      alert(error.message || '승인에 실패했습니다.')
+    } catch (err: any) {
+      alert(err.message || '승인 실패')
     } finally {
       setIsApproving(false)
     }
   }
 
+  /* ------------------------------------------------------------------
+     전송 기능
+  ------------------------------------------------------------------ */
   const handleTransfer = async () => {
     if (!transferTo || !ethers.isAddress(transferTo)) {
       alert('유효한 주소를 입력해주세요.')
@@ -142,147 +147,170 @@ export default function NFTCard({
         tokenId
       )
       await tx.wait()
-      alert('전송이 완료되었습니다!')
-      setTransferTo('')
+
+      alert('전송 완료!')
       setShowTransfer(false)
       onTransfer()
-    } catch (error: any) {
-      console.error('Transfer error:', error)
-      alert(error.message || '전송에 실패했습니다.')
+    } catch (err: any) {
+      alert(err.message || '전송 실패')
     } finally {
       setIsTransferring(false)
     }
   }
 
+  /* ------------------------------------------------------------------
+     ⭐ 실제 삭제(burn)
+  ------------------------------------------------------------------ */
+  const handleBurn = async () => {
+    if (!window.confirm(`Token ID ${tokenId} 를\n정말 삭제하시겠습니까?`))
+      return
+
+    try {
+      setIsBurning(true)
+      const provider = new ethers.BrowserProvider(window.ethereum)
+      const signer = await provider.getSigner()
+      const contract = getContractWithSigner(signer)
+
+      const tx = await contract.burn(tokenId)
+      await tx.wait()
+
+      alert(`Token ID ${tokenId} 삭제 완료!`)
+      onRemove(tokenId)
+    } catch (err: any) {
+      console.error(err)
+      alert(err.message || '삭제 실패!')
+    } finally {
+      setIsBurning(false)
+    }
+  }
+
+  /* ------------------------------------------------------------------
+     UI 렌더링
+  ------------------------------------------------------------------ */
   return (
     <div className="border rounded-lg p-4 bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800">
-      {/* 이미지 표시 */}
+      {/* 이미지 */}
       {isLoadingMetadata ? (
-        <div className="w-full h-48 bg-zinc-100 dark:bg-zinc-800 rounded-lg mb-3 flex items-center justify-center">
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">로딩 중...</p>
+        <div className="w-full h-48 bg-zinc-200 dark:bg-zinc-700 rounded-lg mb-3 flex items-center justify-center">
+          로딩 중...
         </div>
       ) : imageUrl ? (
-        <div className="w-full mb-3 rounded-lg overflow-hidden">
-          <img
-            src={imageUrl}
-            alt={metadata?.name || `NFT #${tokenId}`}
-            className="w-full h-48 object-cover"
-            onError={(e) => {
-              console.error('이미지 로드 실패:', imageUrl)
-              e.currentTarget.style.display = 'none'
-            }}
-          />
-        </div>
+        <img
+          src={imageUrl}
+          className="w-full h-48 rounded-lg object-cover mb-3"
+          alt="NFT"
+        />
       ) : (
-        <div className="w-full h-48 bg-zinc-100 dark:bg-zinc-800 rounded-lg mb-3 flex items-center justify-center">
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            이미지 없음
-          </p>
+        <div className="w-full h-48 bg-zinc-200 dark:bg-zinc-700 rounded-lg mb-3 flex items-center justify-center">
+          이미지 없음
         </div>
       )}
 
-      <div className="mb-3">
-        <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
-          {metadata?.name || `Token ID: ${tokenId}`}
-        </h3>
-        {metadata?.description && (
-          <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-1 line-clamp-2">
-            {metadata.description}
-          </p>
-        )}
-        <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-1">
-          소유자: {formatAddress(owner)}
-        </p>
-        {tokenURI && (
-          <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-1 break-all">
-            URI:{' '}
-            {tokenURI.length > 50 ? `${tokenURI.slice(0, 50)}...` : tokenURI}
-          </p>
-        )}
-      </div>
+      {/* 텍스트 */}
+      <h3 className="text-lg font-semibold">
+        {metadata?.name || `Token ID: ${tokenId}`}
+      </h3>
 
+      {metadata?.description && (
+        <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-1">
+          {metadata.description}
+        </p>
+      )}
+
+      <p className="text-sm mt-1">소유자: {formatAddress(owner)}</p>
+
+      {/* 버튼 */}
       {isOwner && (
-        <div className="space-y-2">
+        <div className="mt-3 space-y-2">
           {!showTransfer && !showApprove && (
             <div className="flex gap-2">
+              {/* 전송 */}
               <button
+                className="flex-1 bg-blue-600 text-white py-2 rounded font-medium"
                 onClick={() => {
                   setShowTransfer(true)
                   setShowApprove(false)
                 }}
-                className="flex-1 px-3 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
               >
                 전송
               </button>
+
+              {/* 승인 */}
               <button
+                className="flex-1 bg-green-600 text-white py-2 rounded font-medium"
                 onClick={() => {
                   setShowApprove(true)
                   setShowTransfer(false)
                 }}
-                className="flex-1 px-3 py-2 text-sm bg-green-600 text-white rounded hover:bg-green-700 transition-colors"
               >
                 승인
+              </button>
+
+              {/* 삭제 (lucide-react 휴지통 아이콘 포함) */}
+              <button
+                className="flex-1 bg-red-600 text-white py-2 rounded font-medium flex items-center justify-center gap-1"
+                onClick={handleBurn}
+                disabled={isBurning}
+              >
+                <Trash2 size={18} />
+                {isBurning ? '삭제 중…' : '삭제'}
               </button>
             </div>
           )}
 
+          {/* 전송 UI */}
           {showTransfer && (
             <div className="space-y-2">
               <input
-                type="text"
+                className="w-full px-3 py-2 border rounded"
+                placeholder="받을 주소"
                 value={transferTo}
                 onChange={(e) => setTransferTo(e.target.value)}
-                placeholder="받을 주소 입력"
-                className="w-full px-3 py-2 text-sm border rounded dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-50"
               />
-              <div className="flex gap-2">
-                <button
-                  onClick={handleTransfer}
-                  disabled={isTransferring}
-                  className="flex-1 px-3 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 transition-colors"
-                >
-                  {isTransferring ? '전송 중...' : '전송하기'}
-                </button>
-                <button
-                  onClick={() => {
-                    setShowTransfer(false)
-                    setTransferTo('')
-                  }}
-                  className="px-3 py-2 text-sm bg-zinc-300 dark:bg-zinc-700 text-zinc-900 dark:text-zinc-50 rounded hover:bg-zinc-400 dark:hover:bg-zinc-600 transition-colors"
-                >
-                  취소
-                </button>
-              </div>
+              <button
+                className="w-full bg-blue-600 text-white py-2 rounded"
+                disabled={isTransferring}
+                onClick={handleTransfer}
+              >
+                {isTransferring ? '전송 중...' : '전송하기'}
+              </button>
+              <button
+                className="w-full bg-zinc-400 py-2 rounded"
+                onClick={() => {
+                  setShowTransfer(false)
+                  setTransferTo('')
+                }}
+              >
+                취소
+              </button>
             </div>
           )}
 
+          {/* 승인 UI */}
           {showApprove && (
             <div className="space-y-2">
               <input
-                type="text"
+                className="w-full px-3 py-2 border rounded"
+                placeholder="승인할 주소"
                 value={approveTo}
                 onChange={(e) => setApproveTo(e.target.value)}
-                placeholder="승인할 주소 입력"
-                className="w-full px-3 py-2 text-sm border rounded dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-50"
               />
-              <div className="flex gap-2">
-                <button
-                  onClick={handleApprove}
-                  disabled={isApproving}
-                  className="flex-1 px-3 py-2 text-sm bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50 transition-colors"
-                >
-                  {isApproving ? '승인 중...' : '승인하기'}
-                </button>
-                <button
-                  onClick={() => {
-                    setShowApprove(false)
-                    setApproveTo('')
-                  }}
-                  className="px-3 py-2 text-sm bg-zinc-300 dark:bg-zinc-700 text-zinc-900 dark:text-zinc-50 rounded hover:bg-zinc-400 dark:hover:bg-zinc-600 transition-colors"
-                >
-                  취소
-                </button>
-              </div>
+              <button
+                className="w-full bg-green-600 text-white py-2 rounded"
+                disabled={isApproving}
+                onClick={handleApprove}
+              >
+                {isApproving ? '승인 중...' : '승인하기'}
+              </button>
+              <button
+                className="w-full bg-zinc-400 py-2 rounded"
+                onClick={() => {
+                  setShowApprove(false)
+                  setApproveTo('')
+                }}
+              >
+                취소
+              </button>
             </div>
           )}
         </div>
